@@ -9,19 +9,18 @@ pipeline {
   environment {
     SNYK_TOKEN = credentials("snyk-token")
   }
-   stage('Checkout Source') {
+  stages {
+    stage("Checkout") {
       steps {
-        checkout([
-          $class: 'GitSCM',
-          branches: [[name: '*/main']],
-          userRemoteConfigs: [[
-            url: 'https://github.com/kamalakar22/board_game.git',
-            credentialsId: 'github-pat'
-          ]]
-        ])
+        checkout([$class: "GitSCM", 
+          branches: [[name: "${branchName}"]], 
+          doGenerateSubmoduleConfigurations: false, 
+          extensions: [], 
+          submoduleCfg: [], 
+          userRemoteConfigs: [[credentialsId: "${gitCredentials}", url: "${repoUrl}"]]]
+        )
       }
     }
-
     stage("Build") {
       steps {
         sh "./gradlew clean build"
