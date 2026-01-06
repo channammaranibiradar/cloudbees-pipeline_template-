@@ -10,15 +10,9 @@ pipeline {
     SNYK_TOKEN = credentials("snyk-token")
   }
   stages {
-    stage("Checkout") {
+    stage('Checkout') {
       steps {
-        checkout([$class: "GitSCM", 
-          branches: [[name: "${branchName}"]], 
-          doGenerateSubmoduleConfigurations: false, 
-          extensions: [], 
-          submoduleCfg: [], 
-          userRemoteConfigs: [[credentialsId: "${gitCredentials}", url: "${repoUrl}"]]]
-        )
+        git branch: 'main', url: 'https://github.com/channammarani586/devops.git'
       }
     }
     stage("Build") {
