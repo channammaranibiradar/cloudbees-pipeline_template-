@@ -1,44 +1,38 @@
 pipeline {
-    agent any
-    
-    stages {
-        stage('Checkout') { 
-            steps {
-                git credentialsId: "${github_creds}" , url: "${github_repo}" 
-            }
-        }
-       stage('Maven Clean Install') {
+  agent { label "linux" }
+  options {
+    durabilityHint("PERFORMANCE_OPTIMIZED")
+    timeout(time: 3, unit: "DAYS")
+    disableConcurrentBuilds()
+    skipDefaultCheckout true
+  }
+  environment {
+    SNYK_TOKEN = credentials("snyk-token")
+  }
+  stages {
+    stage("Checkout") {
       steps {
-        sh '''
-          echo "=== MAVEN CLEAN INSTALL ==="
-          mvn clean install -DskipTests
-        '''
+        checkout([$class: "GitSCM", 
+          branches: [[name: "${branchName}"]], 
+          doGenerateSubmoduleConfigurations: false, 
+          extensions: [], 
+          submoduleCfg: [], 
+          userRemoteConfigs: [[credentialsId: "${gitCredentials}", url: "${repoUrl}"]]]
+        )
       }
     }
-
-    post {
-
-      // Email Ext plugin: 
-      success {  
-        
-        emailext (
-            subject: "SUCCESSFUL: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]'",
-            body: """<p>SUCCESSFUL: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]':</p>
-              <p>Check console output at &QUOT;<a href='${env.BUILD_URL}'>${env.JOB_NAME} [${env.BUILD_NUMBER}]</a>&QUOT;</p>""",
-            to: "${emailRecipient}",
-            from: "buildNotifications@emailaddress.com"
-          )
+    stage("Build") {
+      steps {
+        sh "./gradlew clean build"
       }
-
-      failure {
-        
-        emailext (
-            subject: "FAILED: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]'",
-            body: """<p>FAILED: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]':</p>
-              <p>Check console output at &QUOT;<a href='${env.BUILD_URL}'>${env.JOB_NAME} [${env.BUILD_NUMBER}]</a>&QUOT;</p>""",
-            to: "${emailRecipient}",
-            from: "buildNotifications@emailaddress.com"
-          )
+    }
+    stage("Security Scan") {
+      steps {
+        sh '''
+          snyk auth ${SNYK_TOKEN}
+          snyk test --all-sub-projects
+        '''
       }
+    }    
   }
 }
