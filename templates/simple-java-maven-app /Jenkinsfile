@@ -8,6 +8,8 @@ pipeline {
   }
   environment {
     SNYK_TOKEN = credentials("snyk-token")
+    MAVEN_HOME = tool "${mavenVersion}"
+    JAVA_HOME = tool "${javaVersion}"
   }
   stages {
     stage("Checkout") {
@@ -21,18 +23,59 @@ pipeline {
         )
       }
     }
-    stage("Build") {
+    
+    stage("Setup Environment") {
       steps {
-        sh "./gradlew clean build"
+        sh """
+          echo "Maven Version: ${MAVEN_HOME}"
+          echo "Java Version: ${JAVA_HOME}"
+          export PATH="${MAVEN_HOME}/bin:${JAVA_HOME}/bin:\${PATH}"
+        """
       }
     }
+    
+    stage("Build") {
+      steps {
+        sh "mvn ${buildGoals} -DskipTests"
+      }
+    }
+    
+    stage("Test") {
+      steps {
+        sh "mvn test"
+      }
+      post {
+        always {
+          junit 'target/surefire-reports/*.xml'
+        }
+      }
+    }
+    
     stage("Security Scan") {
       steps {
-        sh '''
-          snyk auth ${SNYK_TOKEN}
-          snyk test --all-sub-projects
-        '''
+        sh """
+          snyk auth \${SNYK_TOKEN}
+          snyk test --all-projects
+        """
       }
-    }    
+    }
+    
+    stage("Archive Artifacts") {
+      steps {
+        archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+      }
+    }
+  }
+  
+  post {
+    always {
+      cleanWs()
+    }
+    success {
+      echo "Pipeline completed successfully!"
+    }
+    failure {
+      echo "Pipeline failed!"
+    }
   }
 }
