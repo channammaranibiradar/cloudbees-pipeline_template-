@@ -7,11 +7,13 @@ pipeline {
                 git credentialsId: "${github_creds}" , url: "${github_repo}" 
             }
         }
-        stage('Build') { 
-            steps {
-                sh 'mvn -B -DskipTests clean package' 
-            }
-        }
+       stage('Maven Clean Install') {
+      steps {
+        sh '''
+          echo "=== MAVEN CLEAN INSTALL ==="
+          mvn clean install -DskipTests
+        '''
+      }
     }
 
     post {
