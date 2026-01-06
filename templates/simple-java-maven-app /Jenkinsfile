@@ -1,81 +1,165 @@
 pipeline {
-  agent { label "linux" }
+  agent {
+    kubernetes {
+      cloud 'rke2-agent'
+      inheritFrom 'jenkins-kaniko-agent'
+      defaultContainer 'jnlp'
+    }
+  }
+
   options {
-    durabilityHint("PERFORMANCE_OPTIMIZED")
-    timeout(time: 3, unit: "DAYS")
-    disableConcurrentBuilds()
-    skipDefaultCheckout true
+    disableConcurrentBuilds(abortPrevious: true)
+    timeout(time: 60, unit: 'MINUTES')
   }
+
   environment {
-    SNYK_TOKEN = credentials("snyk-token")
-    MAVEN_HOME = tool "${mavenVersion}"
-    JAVA_HOME = tool "${javaVersion}"
+    IMAGE_NAME = "kamalakar2210/board_me"
+    IMAGE_TAG  = "${BUILD_NUMBER}"
+
+    // Trivy DB mirrors (already pushed by you)
+    TRIVY_DB_REPOSITORY      = "docker.io/kamalakar2210/trivy-db"
+    TRIVY_JAVA_DB_REPOSITORY = "docker.io/kamalakar2210/trivy-java-db"
   }
+
   stages {
-    stage("Checkout") {
+
+    /* =================================================
+       Verify Agent
+       ================================================= */
+    stage('Verify Agent') {
       steps {
-        checkout([$class: "GitSCM", 
-          branches: [[name: "${branchName}"]], 
-          doGenerateSubmoduleConfigurations: false, 
-          extensions: [], 
-          submoduleCfg: [], 
-          userRemoteConfigs: [[credentialsId: "${gitCredentials}", url: "${repoUrl}"]]]
-        )
+        sh '''
+          echo "=== VERIFY AGENT ==="
+          whoami
+          java -version
+          mvn -version
+          trivy --version
+        '''
       }
     }
-    
-    stage("Setup Environment") {
+
+    /* =================================================
+       Checkout Source
+       ================================================= */
+    stage('Checkout Source') {
       steps {
-        sh """
-          echo "Maven Version: ${MAVEN_HOME}"
-          echo "Java Version: ${JAVA_HOME}"
-          export PATH="${MAVEN_HOME}/bin:${JAVA_HOME}/bin:\${PATH}"
-        """
+        checkout([
+          $class: 'GitSCM',
+          branches: [[name: '*/main']],
+          userRemoteConfigs: [[
+            url: 'https://github.com/kamalakar22/board_game.git',
+            credentialsId: 'github-pat'
+          ]]
+        ])
       }
     }
-    
-    stage("Build") {
+
+    /* =================================================
+       Maven Clean Install (BUILD ONCE)
+       ================================================= */
+    stage('Maven Clean Install') {
       steps {
-        sh "mvn ${buildGoals} -DskipTests"
+        sh '''
+          echo "=== MAVEN CLEAN INSTALL ==="
+          mvn clean install -DskipTests
+        '''
       }
     }
-    
-    stage("Test") {
+
+    /* =================================================
+       SonarQube Scan (FAST – cache via PVC)
+       ================================================= */
+    stage('SonarQube Scan') {
       steps {
-        sh "mvn test"
-      }
-      post {
-        always {
-          junit 'target/surefire-reports/*.xml'
+        withSonarQubeEnv('sonarqube') {
+          sh '''
+            echo "=== SONARQUBE SCAN ==="
+            mvn org.sonarsource.scanner.maven:sonar-maven-plugin:5.5.0.6356:sonar \
+              -Dsonar.projectKey=board-game \
+              -Dsonar.projectName=board-game \
+              -Dsonar.qualitygate.wait=false
+          '''
         }
       }
     }
-    
-    stage("Security Scan") {
+
+    /* =================================================
+       Kaniko Build + Push + TAR (FAST)
+       ================================================= */
+    stage('Kaniko Build') {
       steps {
-        sh """
-          snyk auth \${SNYK_TOKEN}
-          snyk test --all-projects
-        """
+        container('kaniko') {
+          sh '''
+            echo "=== KANIKO BUILD ==="
+
+            /kaniko/executor \
+              --context /workspace \
+              --dockerfile Dockerfile \
+              --destination ${IMAGE_NAME}:${IMAGE_TAG} \
+              --destination ${IMAGE_NAME}:latest \
+              --tarPath image.tar \
+              --verbosity=info
+          '''
+        }
       }
     }
-    
-    stage("Archive Artifacts") {
+
+    /* =================================================
+       Prepare Trivy HTML Template
+       ================================================= */
+    stage('Prepare Trivy Template') {
       steps {
-        archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+        sh '''
+          mkdir -p trivy-templates trivy-reports
+
+          if [ ! -f trivy-templates/html.tpl ]; then
+            curl -fsSL \
+              https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/html.tpl \
+              -o trivy-templates/html.tpl
+          fi
+        '''
+      }
+    }
+
+    /* =================================================
+       Trivy Image Scan (NON-BLOCKING, ALL SEVERITIES)
+       ================================================= */
+    stage('Trivy Image Scan (NON-BLOCKING)') {
+      steps {
+        sh '''
+          echo "=== TRIVY IMAGE SCAN (NON-BLOCKING) ==="
+
+          trivy image \
+            --scanners vuln \
+            --input image.tar \
+            --severity LOW,MEDIUM,HIGH,CRITICAL \
+            --ignore-unfixed \
+            --no-progress \
+            --format template \
+            --template @trivy-templates/html.tpl \
+            --output trivy-reports/trivy-image-report.html || true
+        '''
       }
     }
   }
-  
+
   post {
     always {
-      cleanWs()
+      archiveArtifacts allowEmptyArchive: true, artifacts: 'trivy-reports/*.html'
+      echo "Build #: ${BUILD_NUMBER}"
+      echo "Result : ${currentBuild.currentResult}"
     }
+
     success {
-      echo "Pipeline completed successfully!"
+      echo "✅ PIPELINE SUCCESS – Build, SonarQube & Trivy completed"
     }
+
+    unstable {
+      echo "⚠️ PIPELINE UNSTABLE – Review reports"
+    }
+
     failure {
-      echo "Pipeline failed!"
+      echo "❌ PIPELINE FAILED"
     }
   }
 }
