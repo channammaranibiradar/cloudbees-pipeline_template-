@@ -1,12 +1,13 @@
 type: pipeline-template
 version: 1
 
-name: Spring Boot Gradle Git Pipeline
-description: Spring Boot Gradle Git Pipeline
+name: Spring Boot Maven Git Pipeline
+description: Spring Boot Maven Git Pipeline with Security Scan
 parameters:
   - name: repoUrl
     type: string
     displayName: Repository URL
+    defaultValue: ""
   - name: branchName
     displayName: Branch Name
     type: string
@@ -14,3 +15,15 @@ parameters:
   - name: gitCredentials
     displayName: Git Credentials
     type: credentials
+  - name: mavenVersion
+    displayName: Maven Version
+    type: string
+    defaultValue: "maven-3.8.6"
+  - name: javaVersion
+    displayName: Java Version
+    type: string
+    defaultValue: "java-11"
+  - name: buildGoals
+    displayName: Maven Build Goals
+    type: string
+    defaultValue: "clean install"
